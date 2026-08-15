@@ -63,20 +63,24 @@ impl Tool {
         observer.observe_request(&self.metadata.name, has_auth, self.metadata.requires_auth());
 
         // Extract authorization header if present
-        let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
-            match &authorization {
-                Authorization::None => None,
-                #[cfg(feature = "authorization-token-passthrough")]
-                Authorization::PassthroughWarn(header)
-                | Authorization::PassthroughSilent(header) => header.as_ref(),
-            };
+        #[cfg(feature = "authorization-token-passthrough")]
+        let client = {
+            let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
+                match &authorization {
+                    Authorization::None => None,
+                    Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => header.as_ref(),
+                };
 
-        // Create HTTP client with authorization if provided
-        let client = if let Some(auth) = auth_header {
-            self.http_client.with_authorization(&auth.0)
-        } else {
-            self.http_client.clone()
+            // Create HTTP client with authorization if provided
+            if let Some(auth) = auth_header {
+                self.http_client.with_authorization(&auth.0)
+            } else {
+                self.http_client.clone()
+            }
         };
+
+        #[cfg(not(feature = "authorization-token-passthrough"))]
+        let client = self.http_client.clone();
 
         // Determine which transformer to use: per-tool takes precedence over server-level
         let transformer = self
@@ -183,20 +187,24 @@ impl Tool {
         authorization: Authorization,
     ) -> Result<crate::http_client::HttpResponse, crate::error::ToolCallError> {
         // Extract authorization header if present
-        let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
-            match &authorization {
-                Authorization::None => None,
-                #[cfg(feature = "authorization-token-passthrough")]
-                Authorization::PassthroughWarn(header)
-                | Authorization::PassthroughSilent(header) => header.as_ref(),
-            };
+        #[cfg(feature = "authorization-token-passthrough")]
+        let client = {
+            let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
+                match &authorization {
+                    Authorization::None => None,
+                    Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => header.as_ref(),
+                };
 
-        // Create HTTP client with authorization if provided
-        let client = if let Some(auth) = auth_header {
-            self.http_client.with_authorization(&auth.0)
-        } else {
-            self.http_client.clone()
+            // Create HTTP client with authorization if provided
+            if let Some(auth) = auth_header {
+                self.http_client.with_authorization(&auth.0)
+            } else {
+                self.http_client.clone()
+            }
         };
+
+        #[cfg(not(feature = "authorization-token-passthrough"))]
+        let client = self.http_client.clone();
 
         // Execute the HTTP request using the (potentially auth-enhanced) HTTP client
         // Return the raw HttpResponse without MCP formatting

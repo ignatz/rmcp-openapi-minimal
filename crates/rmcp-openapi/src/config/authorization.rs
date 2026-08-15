@@ -1,4 +1,3 @@
-use rmcp_actix_web::transport::AuthorizationHeader;
 use std::str::FromStr;
 
 /// Authorization handling for MCP server operations
@@ -13,11 +12,11 @@ pub enum Authorization {
 
     /// Forward authorization with debug logging (requires feature flag)
     #[cfg(feature = "authorization-token-passthrough")]
-    PassthroughWarn(Option<AuthorizationHeader>),
+    PassthroughWarn(Option<rmcp_actix_web::transport::AuthorizationHeader>),
 
     /// Forward authorization silently (requires feature flag)
     #[cfg(feature = "authorization-token-passthrough")]
-    PassthroughSilent(Option<AuthorizationHeader>),
+    PassthroughSilent(Option<rmcp_actix_web::transport::AuthorizationHeader>),
 }
 
 /// Simple mode enum for conversion (matches CLI AuthorizationMode)
@@ -57,20 +56,27 @@ impl FromStr for AuthorizationMode {
 
 impl Authorization {
     /// Create Authorization from a mode and optional header
+            #[cfg(feature = "authorization-token-passthrough")]
     pub fn from_mode(
         mode: AuthorizationMode,
-        #[cfg_attr(
-            not(feature = "authorization-token-passthrough"),
-            allow(unused_variables)
-        )]
-        header: Option<AuthorizationHeader>,
+        header: Option<rmcp_actix_web::transport::AuthorizationHeader>,
     ) -> Self {
         match mode {
             AuthorizationMode::Compliant => Authorization::None,
-            #[cfg(feature = "authorization-token-passthrough")]
             AuthorizationMode::PassthroughWarn => Authorization::PassthroughWarn(header),
-            #[cfg(feature = "authorization-token-passthrough")]
             AuthorizationMode::PassthroughSilent => Authorization::PassthroughSilent(header),
+        }
+    }
+
+    /// Create Authorization from a mode and optional header
+            #[cfg(not(feature = "authorization-token-passthrough"))]
+    pub fn from_mode(
+        mode: AuthorizationMode,
+        #[allow(unused)]
+        header: Option<()>,
+    ) -> Self {
+        match mode {
+            AuthorizationMode::Compliant => Authorization::None,
         }
     }
 }

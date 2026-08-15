@@ -8,7 +8,6 @@ use rmcp::{
     },
     service::{RequestContext, RoleServer},
 };
-use rmcp_actix_web::transport::AuthorizationHeader;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -424,7 +423,10 @@ impl ServerHandler for Server {
         let arguments_value = Value::Object(arguments);
 
         // Extract authorization header from context extensions
-        let auth_header = context.extensions.get::<AuthorizationHeader>().cloned();
+        #[cfg(feature = "authorization-token-passthrough")]
+        let auth_header = context.extensions.get::<rmcp_actix_web::transport::AuthorizationHeader>().cloned();
+        #[cfg(not(feature = "authorization-token-passthrough"))]
+        let auth_header = None;
 
         if auth_header.is_some() {
             debug!("Authorization header is present");
