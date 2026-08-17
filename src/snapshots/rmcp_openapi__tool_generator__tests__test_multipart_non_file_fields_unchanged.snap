@@ -1,18 +1,17 @@
 ---
-source: crates/rmcp-openapi/src/tool_generator.rs
+source: src/tool_generator.rs
 expression: schema
 ---
 {
   "type": "object",
   "properties": {
+    "title": {
+      "type": "string",
+      "description": "Form title"
+    },
     "count": {
       "type": "integer",
       "description": "Item count"
-    },
-    "date": {
-      "type": "string",
-      "description": "Date field",
-      "format": "date"
     },
     "enabled": {
       "type": "boolean",
@@ -22,14 +21,15 @@ expression: schema
       "type": "number",
       "description": "Price value"
     },
-    "title": {
-      "type": "string",
-      "description": "Form title"
-    },
     "uuid": {
       "type": "string",
       "description": "UUID field",
       "format": "uuid"
+    },
+    "date": {
+      "type": "string",
+      "description": "Date field",
+      "format": "date"
     }
   },
   "required": [

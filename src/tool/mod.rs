@@ -9,7 +9,7 @@ use crate::error::Error;
 use crate::http_client::HttpClient;
 use crate::security::SecurityObserver;
 use crate::transformer::ResponseTransformer;
-use rmcp::model::{CallToolResult, Tool as McpTool};
+use rmcp::model::{CallToolResult, ContentBlock, Tool as McpTool};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -45,7 +45,6 @@ impl Tool {
         authorization: Authorization,
         server_transformer: Option<&dyn ResponseTransformer>,
     ) -> Result<CallToolResult, crate::error::ToolCallError> {
-        use rmcp::model::Content;
         use serde_json::json;
 
         // Create security observer for logging
@@ -112,9 +111,9 @@ impl Tool {
 
                     // Return image content (transformers don't apply to binary responses)
                     return Ok(if response.is_success {
-                        CallToolResult::success(vec![Content::image(base64_data, mime_type)])
+                        CallToolResult::success(vec![ContentBlock::image(base64_data, mime_type)])
                     } else {
-                        CallToolResult::error(vec![Content::image(base64_data, mime_type)])
+                        CallToolResult::error(vec![ContentBlock::image(base64_data, mime_type)])
                     });
                 }
 
@@ -148,7 +147,7 @@ impl Tool {
                     // "For backwards compatibility, a tool that returns structured content SHOULD also
                     // return the serialized JSON in a TextContent block."
                     match serde_json::to_string(structured) {
-                        Ok(json_string) => vec![Content::text(json_string)],
+                        Ok(json_string) => vec![ContentBlock::text(json_string)],
                         Err(e) => {
                             // Return error if we can't serialize the structured content
                             let error = crate::error::ToolCallError::Execution(
@@ -161,7 +160,7 @@ impl Tool {
                         }
                     }
                 } else {
-                    vec![Content::text(response.to_mcp_content())]
+                    vec![ContentBlock::text(response.to_mcp_content())]
                 };
 
                 // Return successful response

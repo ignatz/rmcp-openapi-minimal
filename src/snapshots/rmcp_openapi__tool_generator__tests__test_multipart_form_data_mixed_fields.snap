@@ -1,14 +1,10 @@
 ---
-source: crates/rmcp-openapi/src/tool_generator.rs
+source: src/tool_generator.rs
 expression: schema
 ---
 {
   "type": "object",
   "properties": {
-    "age": {
-      "type": "integer",
-      "description": "User's age"
-    },
     "avatar": {
       "type": "object",
       "description": "Profile avatar image",
@@ -26,14 +22,18 @@ expression: schema
         "content"
       ]
     },
+    "name": {
+      "type": "string",
+      "description": "User's display name"
+    },
+    "age": {
+      "type": "integer",
+      "description": "User's age"
+    },
     "email": {
       "type": "string",
       "description": "User's email address",
       "format": "email"
-    },
-    "name": {
-      "type": "string",
-      "description": "User's display name"
     }
   },
   "required": [

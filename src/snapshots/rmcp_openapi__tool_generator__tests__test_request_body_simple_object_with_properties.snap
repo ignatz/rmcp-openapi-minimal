@@ -1,14 +1,14 @@
 ---
-source: crates/rmcp-openapi/src/tool_generator.rs
+source: src/tool_generator.rs
 expression: request_body_schema
 ---
 {
   "type": "object",
   "properties": {
-    "reason": {
+    "status": {
       "type": "string"
     },
-    "status": {
+    "reason": {
       "type": "string"
     }
   },

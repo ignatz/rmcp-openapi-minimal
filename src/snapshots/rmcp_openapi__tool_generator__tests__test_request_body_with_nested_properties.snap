@@ -1,17 +1,17 @@
 ---
-source: crates/rmcp-openapi/src/tool_generator.rs
+source: src/tool_generator.rs
 expression: request_body_schema
 ---
 {
   "type": "object",
   "properties": {
+    "name": {
+      "type": "string"
+    },
     "age": {
       "type": "integer",
       "minimum": 0,
       "maximum": 150
-    },
-    "name": {
-      "type": "string"
     }
   },
   "required": [

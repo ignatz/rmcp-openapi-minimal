@@ -1,13 +1,13 @@
 ---
-source: crates/rmcp-openapi/src/tool_generator.rs
+source: src/tool_generator.rs
 expression: schema
 ---
 {
   "type": "object",
   "properties": {
-    "attachment": {
+    "data": {
       "type": "object",
-      "description": "Binary file attachment",
+      "description": "Base64 encoded file content",
       "properties": {
         "content": {
           "type": "string",
@@ -22,9 +22,9 @@ expression: schema
         "content"
       ]
     },
-    "data": {
+    "attachment": {
       "type": "object",
-      "description": "Base64 encoded file content",
+      "description": "Binary file attachment",
       "properties": {
         "content": {
           "type": "string",

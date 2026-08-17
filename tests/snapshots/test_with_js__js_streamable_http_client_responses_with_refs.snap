@@ -1,5 +1,5 @@
 ---
-source: crates/rmcp-openapi/tests/test_with_js.rs
+source: tests/test_with_js.rs
 expression: responses
 ---
 [
@@ -25,12 +25,6 @@ expression: responses
                     "type": "string",
                     "example": "doggie"
                   },
-                  "photoUrls": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
                   "status": {
                     "type": "string",
                     "enum": [
@@ -38,6 +32,12 @@ expression: responses
                       "pending",
                       "sold"
                     ]
+                  },
+                  "photoUrls": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   }
                 },
                 "required": [
@@ -76,12 +76,6 @@ expression: responses
                         "type": "string",
                         "example": "doggie"
                       },
-                      "photoUrls": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
                       "status": {
                         "type": "string",
                         "enum": [
@@ -89,6 +83,12 @@ expression: responses
                           "pending",
                           "sold"
                         ]
+                      },
+                      "photoUrls": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       }
                     },
                     "required": [
@@ -293,12 +293,6 @@ expression: responses
                           "type": "string",
                           "example": "doggie"
                         },
-                        "photoUrls": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
                         "status": {
                           "type": "string",
                           "enum": [
@@ -306,6 +300,12 @@ expression: responses
                             "pending",
                             "sold"
                           ]
+                        },
+                        "photoUrls": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
                         }
                       },
                       "required": [
@@ -496,12 +496,6 @@ expression: responses
                         "type": "string",
                         "example": "doggie"
                       },
-                      "photoUrls": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
                       "status": {
                         "type": "string",
                         "enum": [
@@ -509,6 +503,12 @@ expression: responses
                           "pending",
                           "sold"
                         ]
+                      },
+                      "photoUrls": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       }
                     },
                     "required": [

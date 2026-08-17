@@ -108,7 +108,7 @@ use jsonschema::error::{TypeKind, ValidationErrorKind};
 use schemars::schema_for;
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::HttpClient;
 use crate::error::{
@@ -858,7 +858,7 @@ impl ToolGenerator {
     ///
     /// Prioritizes successful response codes (2XX) and returns the first found schema
     fn extract_output_schema(
-        responses: &Option<BTreeMap<String, ObjectOrReference<Response>>>,
+        responses: &Option<oas3::Map<String, ObjectOrReference<Response>>>,
         spec: &Spec,
     ) -> Result<Option<Value>, Error> {
         let responses = match responses {
@@ -1218,21 +1218,12 @@ impl ToolGenerator {
     /// abort tool generation for the whole server. Restoring the full snapshot keeps
     /// cycle detection scoped to a single descent path.
     fn convert_member_schema(
-        schema_ref: &ObjectOrReference<ObjectSchema>,
+        schema_ref: &Schema,
         spec: &Spec,
         visited: &mut HashSet<String>,
     ) -> Result<Value, Error> {
         let snapshot = visited.clone();
-        let result = match schema_ref {
-            ObjectOrReference::Object(schema) => {
-                Self::convert_object_schema_to_json_schema(schema, spec, visited)
-            }
-            ObjectOrReference::Ref { ref_path, .. } => {
-                Self::resolve_reference(ref_path, spec, visited).and_then(|resolved| {
-                    Self::convert_object_schema_to_json_schema(&resolved, spec, visited)
-                })
-            }
-        };
+        let result = Self::convert_schema_to_json_schema(schema_ref, spec, visited);
         *visited = snapshot;
         result
     }
@@ -1368,13 +1359,20 @@ impl ToolGenerator {
 
         // Resolve the schema reference
         let resolved_schema = match schema_ref {
-            ObjectOrReference::Object(obj_schema) => obj_schema.clone(),
-            ObjectOrReference::Ref {
-                ref_path: nested_ref,
-                ..
-            } => {
-                // Recursively resolve nested references
-                Self::resolve_reference(nested_ref, spec, visited)?
+            Schema::Object(obj_schema_or_ref) => match obj_schema_or_ref.as_ref() {
+                ObjectOrReference::Object(obj_schema) => obj_schema.clone(),
+                ObjectOrReference::Ref {
+                    ref_path: nested_ref,
+                    ..
+                } => {
+                    // Recursively resolve nested references
+                    Self::resolve_reference(nested_ref, spec, visited)?
+                }
+            },
+            Schema::Boolean(_) => {
+                return Err(Error::ToolGeneration(format!(
+                    "Schema '{schema_name}' is a boolean schema and cannot be used as an object"
+                )));
             }
         };
 
@@ -1698,55 +1696,51 @@ impl ToolGenerator {
         // Convert the parameter schema using the unified converter
         let base_schema = if let Some(schema_ref) = &param.schema {
             match schema_ref {
-                ObjectOrReference::Object(obj_schema) => {
-                    let mut visited = HashSet::new();
-                    Self::convert_schema_to_json_schema(
-                        &Schema::Object(Box::new(ObjectOrReference::Object(obj_schema.clone()))),
-                        spec,
-                        &mut visited,
-                    )?
-                }
-                ObjectOrReference::Ref {
-                    ref_path,
-                    summary,
-                    description,
-                } => {
-                    // Resolve the reference with metadata extraction
-                    let mut visited = HashSet::new();
-                    match Self::resolve_reference_with_metadata(
+                Schema::Object(schema_or_ref) => match schema_or_ref.as_ref() {
+                    ObjectOrReference::Object(_) => {
+                        let mut visited = HashSet::new();
+                        Self::convert_schema_to_json_schema(schema_ref, spec, &mut visited)?
+                    }
+                    ObjectOrReference::Ref {
                         ref_path,
-                        summary.clone(),
-                        description.clone(),
-                        spec,
-                        &mut visited,
-                    ) {
-                        Ok((resolved_schema, ref_metadata)) => {
-                            let mut schema_json = Self::convert_schema_to_json_schema(
-                                &Schema::Object(Box::new(ObjectOrReference::Object(
-                                    resolved_schema,
-                                ))),
-                                spec,
-                                &mut visited,
-                            )?;
+                        summary,
+                        description,
+                    } => {
+                        // Resolve the reference with metadata extraction
+                        let mut visited = HashSet::new();
+                        match Self::resolve_reference_with_metadata(
+                            ref_path,
+                            summary.clone(),
+                            description.clone(),
+                            spec,
+                            &mut visited,
+                        ) {
+                            Ok((resolved_schema, ref_metadata)) => {
+                                let mut schema_json = Self::convert_schema_to_json_schema(
+                                    &Schema::Object(Box::new(ObjectOrReference::Object(
+                                        resolved_schema,
+                                    ))),
+                                    spec,
+                                    &mut visited,
+                                )?;
 
-                            // Enhance schema with reference metadata if available
-                            if let Value::Object(ref mut schema_obj) = schema_json {
-                                // Reference metadata takes precedence over schema descriptions (OpenAPI 3.1 semantics)
-                                if let Some(ref_desc) = ref_metadata.best_description() {
+                                // Enhance schema with reference metadata if available
+                                if let Value::Object(ref mut schema_obj) = schema_json
+                                    && let Some(ref_desc) = ref_metadata.best_description()
+                                {
                                     schema_obj.insert("description".to_string(), json!(ref_desc));
                                 }
-                                // Fallback: if no reference metadata but schema lacks description, keep existing logic
-                                // (This case is now handled by the reference metadata being None)
-                            }
 
-                            schema_json
-                        }
-                        Err(_) => {
-                            // Fallback to string for unresolvable references
-                            json!({"type": "string"})
+                                schema_json
+                            }
+                            Err(_) => {
+                                // Fallback to string for unresolvable references
+                                json!({"type": "string"})
+                            }
                         }
                     }
-                }
+                },
+                Schema::Boolean(_) => json!({"type": "string"}),
             }
         } else {
             // Default to string if no schema
@@ -1914,7 +1908,7 @@ impl ToolGenerator {
     /// - If mixed types, use oneOf with all unique types from prefixItems
     /// - Add descriptive comment about tuple nature
     fn convert_prefix_items_to_draft07(
-        prefix_items: &[ObjectOrReference<ObjectSchema>],
+        prefix_items: &[Schema],
         items: &Option<Box<Schema>>,
         result: &mut serde_json::Map<String, Value>,
         spec: &Spec,
@@ -1925,63 +1919,72 @@ impl ToolGenerator {
         let mut item_types = Vec::new();
         for prefix_item in prefix_items {
             match prefix_item {
-                ObjectOrReference::Object(obj_schema) => {
-                    if let Some(schema_type) = &obj_schema.schema_type {
-                        match schema_type {
-                            SchemaTypeSet::Single(SchemaType::String) => item_types.push("string"),
-                            SchemaTypeSet::Single(SchemaType::Integer) => {
-                                item_types.push("integer")
-                            }
-                            SchemaTypeSet::Single(SchemaType::Number) => item_types.push("number"),
-                            SchemaTypeSet::Single(SchemaType::Boolean) => {
-                                item_types.push("boolean")
-                            }
-                            SchemaTypeSet::Single(SchemaType::Array) => item_types.push("array"),
-                            SchemaTypeSet::Single(SchemaType::Object) => item_types.push("object"),
-                            _ => item_types.push("string"), // fallback
-                        }
-                    } else {
-                        item_types.push("string"); // fallback
-                    }
-                }
-                ObjectOrReference::Ref { ref_path, .. } => {
-                    // Try to resolve the reference
-                    let mut visited = HashSet::new();
-                    match Self::resolve_reference(ref_path, spec, &mut visited) {
-                        Ok(resolved_schema) => {
-                            // Extract the type immediately and store it as a string
-                            if let Some(schema_type_set) = &resolved_schema.schema_type {
-                                match schema_type_set {
-                                    SchemaTypeSet::Single(SchemaType::String) => {
-                                        item_types.push("string")
-                                    }
-                                    SchemaTypeSet::Single(SchemaType::Integer) => {
-                                        item_types.push("integer")
-                                    }
-                                    SchemaTypeSet::Single(SchemaType::Number) => {
-                                        item_types.push("number")
-                                    }
-                                    SchemaTypeSet::Single(SchemaType::Boolean) => {
-                                        item_types.push("boolean")
-                                    }
-                                    SchemaTypeSet::Single(SchemaType::Array) => {
-                                        item_types.push("array")
-                                    }
-                                    SchemaTypeSet::Single(SchemaType::Object) => {
-                                        item_types.push("object")
-                                    }
-                                    _ => item_types.push("string"), // fallback
+                Schema::Object(obj_schema_or_ref) => match obj_schema_or_ref.as_ref() {
+                    ObjectOrReference::Object(obj_schema) => {
+                        if let Some(schema_type) = &obj_schema.schema_type {
+                            match schema_type {
+                                SchemaTypeSet::Single(SchemaType::String) => {
+                                    item_types.push("string")
                                 }
-                            } else {
-                                item_types.push("string"); // fallback
+                                SchemaTypeSet::Single(SchemaType::Integer) => {
+                                    item_types.push("integer")
+                                }
+                                SchemaTypeSet::Single(SchemaType::Number) => {
+                                    item_types.push("number")
+                                }
+                                SchemaTypeSet::Single(SchemaType::Boolean) => {
+                                    item_types.push("boolean")
+                                }
+                                SchemaTypeSet::Single(SchemaType::Array) => item_types.push("array"),
+                                SchemaTypeSet::Single(SchemaType::Object) => {
+                                    item_types.push("object")
+                                }
+                                _ => item_types.push("string"), // fallback
                             }
-                        }
-                        Err(_) => {
-                            // Fallback to string for unresolvable references
-                            item_types.push("string");
+                        } else {
+                            item_types.push("string"); // fallback
                         }
                     }
-                }
+                    ObjectOrReference::Ref { ref_path, .. } => {
+                        // Try to resolve the reference
+                        let mut visited = HashSet::new();
+                        match Self::resolve_reference(ref_path, spec, &mut visited) {
+                            Ok(resolved_schema) => {
+                                // Extract the type immediately and store it as a string
+                                if let Some(schema_type_set) = &resolved_schema.schema_type {
+                                    match schema_type_set {
+                                        SchemaTypeSet::Single(SchemaType::String) => {
+                                            item_types.push("string")
+                                        }
+                                        SchemaTypeSet::Single(SchemaType::Integer) => {
+                                            item_types.push("integer")
+                                        }
+                                        SchemaTypeSet::Single(SchemaType::Number) => {
+                                            item_types.push("number")
+                                        }
+                                        SchemaTypeSet::Single(SchemaType::Boolean) => {
+                                            item_types.push("boolean")
+                                        }
+                                        SchemaTypeSet::Single(SchemaType::Array) => {
+                                            item_types.push("array")
+                                        }
+                                        SchemaTypeSet::Single(SchemaType::Object) => {
+                                            item_types.push("object")
+                                        }
+                                        _ => item_types.push("string"), // fallback
+                                    }
+                                } else {
+                                    item_types.push("string"); // fallback
+                                }
+                            }
+                            Err(_) => {
+                                // Fallback to string for unresolvable references
+                                item_types.push("string");
+                            }
+                        }
+                    }
+                },
+                Schema::Boolean(_) => item_types.push("string"),
             }
         }
 
@@ -2049,13 +2052,10 @@ impl ToolGenerator {
 
                 if let Some(media_type) = schema_info {
                     if let Some(schema_ref) = &media_type.schema {
-                        // Convert ObjectOrReference<ObjectSchema> to Schema
-                        let schema = Schema::Object(Box::new(schema_ref.clone()));
-
                         // Use the unified converter
                         let mut visited = HashSet::new();
                         let converted_schema =
-                            Self::convert_schema_to_json_schema(&schema, spec, &mut visited)?;
+                            Self::convert_schema_to_json_schema(schema_ref, spec, &mut visited)?;
 
                         // Ensure we have an object schema
                         let mut schema_obj = match converted_schema {
@@ -2138,12 +2138,15 @@ impl ToolGenerator {
 
         // Get the properties from the schema
         let obj_schema = match schema_ref {
-            ObjectOrReference::Object(obj) => obj.clone(),
-            ObjectOrReference::Ref { ref_path, .. } => {
-                // Resolve the reference
-                let mut visited = HashSet::new();
-                Self::resolve_reference(ref_path, spec, &mut visited)?
-            }
+            Schema::Object(obj_or_ref) => match obj_or_ref.as_ref() {
+                ObjectOrReference::Object(obj) => obj.clone(),
+                ObjectOrReference::Ref { ref_path, .. } => {
+                    // Resolve the reference
+                    let mut visited = HashSet::new();
+                    Self::resolve_reference(ref_path, spec, &mut visited)?
+                }
+            },
+            Schema::Boolean(_) => return Ok(None),
         };
 
         // Build properties with file field transformation
@@ -2159,17 +2162,19 @@ impl ToolGenerator {
 
                 // Get the description from the original schema
                 let description = match prop_schema_or_ref {
-                    ObjectOrReference::Object(obj) => obj.description.as_deref(),
-                    ObjectOrReference::Ref { .. } => None,
+                    Schema::Object(obj_or_ref) => match obj_or_ref.as_ref() {
+                        ObjectOrReference::Object(obj) => obj.description.as_deref(),
+                        ObjectOrReference::Ref { .. } => None,
+                    },
+                    Schema::Boolean(_) => None,
                 };
 
                 // Transform to file object schema
                 Self::convert_file_field_to_schema(description)
             } else {
                 // Convert non-file field using standard conversion
-                let schema = Schema::Object(Box::new(prop_schema_or_ref.clone()));
                 let mut visited = HashSet::new();
-                Self::convert_schema_to_json_schema(&schema, spec, &mut visited)?
+                Self::convert_schema_to_json_schema(prop_schema_or_ref, spec, &mut visited)?
             };
 
             props_map.insert(sanitized_name, prop_schema);
@@ -2864,25 +2869,10 @@ impl ToolGenerator {
     ///
     /// The error schema component does use `schema_for!(ErrorResponse)` (via `create_error_response_schema()`)
     /// because `ErrorResponse` is a known Rust type, but the overall wrapper must be built dynamically.
-    fn wrap_output_schema(
-        body_schema: &ObjectOrReference<ObjectSchema>,
-        spec: &Spec,
-    ) -> Result<Value, Error> {
+    fn wrap_output_schema(body_schema: &Schema, spec: &Spec) -> Result<Value, Error> {
         // Convert the body schema to JSON
         let mut visited = HashSet::new();
-        let body_schema_json = match body_schema {
-            ObjectOrReference::Object(obj_schema) => {
-                Self::convert_object_schema_to_json_schema(obj_schema, spec, &mut visited)?
-            }
-            ObjectOrReference::Ref { ref_path, .. } => {
-                let resolved = Self::resolve_reference(ref_path, spec, &mut visited)?;
-                let result =
-                    Self::convert_object_schema_to_json_schema(&resolved, spec, &mut visited)?;
-                // Remove after conversion to allow schema reuse (see convert_schema_to_json_schema)
-                visited.remove(ref_path);
-                result
-            }
-        };
+        let body_schema_json = Self::convert_schema_to_json_schema(body_schema, spec, &mut visited)?;
 
         let error_schema = create_error_response_schema();
 
@@ -2951,13 +2941,18 @@ impl ToolGenerator {
     ///
     /// This is a convenience method for checking file fields when iterating
     /// over properties in a multipart/form-data schema.
-    fn is_file_field_property(prop_schema: &ObjectOrReference<ObjectSchema>) -> bool {
+    fn is_file_field_property(prop_schema: &Schema) -> bool {
         match prop_schema {
-            ObjectOrReference::Object(obj_schema) => Self::is_file_field_object_schema(obj_schema),
-            ObjectOrReference::Ref { .. } => {
-                // References need to be resolved first; return false for unresolved refs
-                false
-            }
+            Schema::Object(obj_or_ref) => match obj_or_ref.as_ref() {
+                ObjectOrReference::Object(obj_schema) => {
+                    Self::is_file_field_object_schema(obj_schema)
+                }
+                ObjectOrReference::Ref { .. } => {
+                    // References need to be resolved first; return false for unresolved refs
+                    false
+                }
+            },
+            Schema::Boolean(_) => false,
         }
     }
 
@@ -3305,16 +3300,16 @@ mod tests {
                 extensions: Default::default(),
             },
             components: Some(Components {
-                schemas: BTreeMap::new(),
-                responses: BTreeMap::new(),
-                parameters: BTreeMap::new(),
-                examples: BTreeMap::new(),
-                request_bodies: BTreeMap::new(),
-                headers: BTreeMap::new(),
-                security_schemes: BTreeMap::new(),
-                links: BTreeMap::new(),
-                callbacks: BTreeMap::new(),
-                path_items: BTreeMap::new(),
+                schemas: BTreeMap::new().into(),
+                responses: BTreeMap::new().into(),
+                parameters: BTreeMap::new().into(),
+                examples: BTreeMap::new().into(),
+                request_bodies: BTreeMap::new().into(),
+                headers: BTreeMap::new().into(),
+                security_schemes: BTreeMap::new().into(),
+                links: BTreeMap::new().into(),
+                callbacks: BTreeMap::new().into(),
+                path_items: BTreeMap::new().into(),
                 extensions: Default::default(),
             }),
             servers: vec![],
@@ -3322,9 +3317,33 @@ mod tests {
             external_docs: None,
             tags: vec![],
             security: vec![],
-            webhooks: BTreeMap::new(),
+            webhooks: BTreeMap::new().into(),
             extensions: Default::default(),
         }
+    }
+
+    fn schema_object(schema: ObjectSchema) -> Schema {
+        Schema::Object(Box::new(ObjectOrReference::Object(schema)))
+    }
+
+    fn schema_ref(ref_path: &str) -> Schema {
+        Schema::Object(Box::new(ObjectOrReference::Ref {
+            ref_path: ref_path.to_string(),
+            summary: None,
+            description: None,
+        }))
+    }
+
+    fn schema_ref_with_metadata(
+        ref_path: &str,
+        summary: Option<&str>,
+        description: Option<&str>,
+    ) -> Schema {
+        Schema::Object(Box::new(ObjectOrReference::Ref {
+            ref_path: ref_path.to_string(),
+            summary: summary.map(std::string::ToString::to_string),
+            description: description.map(std::string::ToString::to_string),
+        }))
     }
 
     fn validate_tool_against_mcp_schema(metadata: &ToolMetadata) {
@@ -3403,7 +3422,7 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                 minimum: Some(serde_json::Number::from(1_i64)),
                 format: Some("int64".to_string()),
@@ -3418,19 +3437,19 @@ mod tests {
         operation.parameters.push(ObjectOrReference::Object(param));
 
         // Add a 200 response with Pet schema
-        let mut responses = BTreeMap::new();
-        let mut content = BTreeMap::new();
+        let mut responses = oas3::Map::new();
+        let mut content = oas3::Map::new();
         content.insert(
             "application/json".to_string(),
             MediaType {
                 extensions: Default::default(),
-                schema: Some(ObjectOrReference::Object(ObjectSchema {
+                schema: Some(schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                     properties: {
-                        let mut props = BTreeMap::new();
+                        let mut props = oas3::Map::new();
                         props.insert(
                             "id".to_string(),
-                            ObjectOrReference::Object(ObjectSchema {
+                            schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                                 format: Some("int64".to_string()),
                                 ..Default::default()
@@ -3438,14 +3457,14 @@ mod tests {
                         );
                         props.insert(
                             "name".to_string(),
-                            ObjectOrReference::Object(ObjectSchema {
+                            schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                                 ..Default::default()
                             }),
                         );
                         props.insert(
                             "status".to_string(),
-                            ObjectOrReference::Object(ObjectSchema {
+                            schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                                 ..Default::default()
                             }),
@@ -3511,12 +3530,12 @@ mod tests {
         // Test prefixItems with mixed types and items:false
 
         let prefix_items = vec![
-            ObjectOrReference::Object(ObjectSchema {
+            schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                 format: Some("int32".to_string()),
                 ..Default::default()
             }),
-            ObjectOrReference::Object(ObjectSchema {
+            schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 ..Default::default()
             }),
@@ -3538,11 +3557,11 @@ mod tests {
     fn test_convert_prefix_items_to_draft07_uniform_types() {
         // Test prefixItems with uniform types
         let prefix_items = vec![
-            ObjectOrReference::Object(ObjectSchema {
+            schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 ..Default::default()
             }),
-            ObjectOrReference::Object(ObjectSchema {
+            schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 ..Default::default()
             }),
@@ -3573,15 +3592,15 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Array)),
                 prefix_items: vec![
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::Number)),
                         format: Some("double".to_string()),
                         ..Default::default()
                     }),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::Number)),
                         format: Some("double".to_string()),
                         ..Default::default()
@@ -3707,7 +3726,7 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 enum_values: vec![json!("available"), json!("pending"), json!("sold")],
                 ..Default::default()
@@ -3747,7 +3766,7 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 enum_values: vec![json!("available"), json!("pending"), json!("sold")],
                 ..Default::default()
@@ -3796,7 +3815,7 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Array)),
                 items: Some(Box::new(Schema::Object(Box::new(
                     ObjectOrReference::Object(ObjectSchema {
@@ -3841,12 +3860,12 @@ mod tests {
             request_body: Some(ObjectOrReference::Object(RequestBody {
                 description: Some("Pet object that needs to be added to the store".to_string()),
                 content: {
-                    let mut content = BTreeMap::new();
+                    let mut content = oas3::Map::new();
                     content.insert(
                         "application/json".to_string(),
                         MediaType {
                             extensions: Default::default(),
-                            schema: Some(ObjectOrReference::Object(ObjectSchema {
+                            schema: Some(schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                                 ..Default::default()
                             })),
@@ -3917,12 +3936,12 @@ mod tests {
             request_body: Some(ObjectOrReference::Object(RequestBody {
                 description: Some("Array of pet objects".to_string()),
                 content: {
-                    let mut content = BTreeMap::new();
+                    let mut content = oas3::Map::new();
                     content.insert(
                         "application/json".to_string(),
                         MediaType {
                             extensions: Default::default(),
-                            schema: Some(ObjectOrReference::Object(ObjectSchema {
+                            schema: Some(schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Array)),
                                 items: Some(Box::new(Schema::Object(Box::new(
                                     ObjectOrReference::Object(ObjectSchema {
@@ -4001,12 +4020,12 @@ mod tests {
             request_body: Some(ObjectOrReference::Object(RequestBody {
                 description: None,
                 content: {
-                    let mut content = BTreeMap::new();
+                    let mut content = oas3::Map::new();
                     content.insert(
                         "text/plain".to_string(),
                         MediaType {
                             extensions: Default::default(),
-                            schema: Some(ObjectOrReference::Object(ObjectSchema {
+                            schema: Some(schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                                 min_length: Some(1),
                                 max_length: Some(100),
@@ -4160,18 +4179,18 @@ mod tests {
             request_body: Some(ObjectOrReference::Object(RequestBody {
                 description: Some("Pet status update".to_string()),
                 content: {
-                    let mut content = BTreeMap::new();
+                    let mut content = oas3::Map::new();
                     content.insert(
                         "application/json".to_string(),
                         MediaType {
                             extensions: Default::default(),
-                            schema: Some(ObjectOrReference::Object(ObjectSchema {
+                            schema: Some(schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                                 properties: {
-                                    let mut props = BTreeMap::new();
+                                    let mut props = oas3::Map::new();
                                     props.insert(
                                         "status".to_string(),
-                                        ObjectOrReference::Object(ObjectSchema {
+                                        schema_object(ObjectSchema {
                                             schema_type: Some(SchemaTypeSet::Single(
                                                 SchemaType::String,
                                             )),
@@ -4180,7 +4199,7 @@ mod tests {
                                     );
                                     props.insert(
                                         "reason".to_string(),
-                                        ObjectOrReference::Object(ObjectSchema {
+                                        schema_object(ObjectSchema {
                                             schema_type: Some(SchemaTypeSet::Single(
                                                 SchemaType::String,
                                             )),
@@ -4259,18 +4278,18 @@ mod tests {
             request_body: Some(ObjectOrReference::Object(RequestBody {
                 description: Some("User creation data".to_string()),
                 content: {
-                    let mut content = BTreeMap::new();
+                    let mut content = oas3::Map::new();
                     content.insert(
                         "application/json".to_string(),
                         MediaType {
                             extensions: Default::default(),
-                            schema: Some(ObjectOrReference::Object(ObjectSchema {
+                            schema: Some(schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                                 properties: {
-                                    let mut props = BTreeMap::new();
+                                    let mut props = oas3::Map::new();
                                     props.insert(
                                         "name".to_string(),
-                                        ObjectOrReference::Object(ObjectSchema {
+                                        schema_object(ObjectSchema {
                                             schema_type: Some(SchemaTypeSet::Single(
                                                 SchemaType::String,
                                             )),
@@ -4279,7 +4298,7 @@ mod tests {
                                     );
                                     props.insert(
                                         "age".to_string(),
-                                        ObjectOrReference::Object(ObjectSchema {
+                                        schema_object(ObjectSchema {
                                             schema_type: Some(SchemaTypeSet::Single(
                                                 SchemaType::Integer,
                                             )),
@@ -4380,26 +4399,26 @@ mod tests {
         use oas3::spec::Response;
 
         // Create a 200 response with schema
-        let mut responses = BTreeMap::new();
-        let mut content = BTreeMap::new();
+        let mut responses = oas3::Map::new();
+        let mut content = oas3::Map::new();
         content.insert(
             "application/json".to_string(),
             MediaType {
                 extensions: Default::default(),
-                schema: Some(ObjectOrReference::Object(ObjectSchema {
+                schema: Some(schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                     properties: {
-                        let mut props = BTreeMap::new();
+                        let mut props = oas3::Map::new();
                         props.insert(
                             "id".to_string(),
-                            ObjectOrReference::Object(ObjectSchema {
+                            schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                                 ..Default::default()
                             }),
                         );
                         props.insert(
                             "name".to_string(),
-                            ObjectOrReference::Object(ObjectSchema {
+                            schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                                 ..Default::default()
                             }),
@@ -4437,19 +4456,19 @@ mod tests {
         use oas3::spec::Response;
 
         // Create only a 201 response (no 200)
-        let mut responses = BTreeMap::new();
-        let mut content = BTreeMap::new();
+        let mut responses = oas3::Map::new();
+        let mut content = oas3::Map::new();
         content.insert(
             "application/json".to_string(),
             MediaType {
                 extensions: Default::default(),
-                schema: Some(ObjectOrReference::Object(ObjectSchema {
+                schema: Some(schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                     properties: {
-                        let mut props = BTreeMap::new();
+                        let mut props = oas3::Map::new();
                         props.insert(
                             "created".to_string(),
-                            ObjectOrReference::Object(ObjectSchema {
+                            schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Boolean)),
                                 ..Default::default()
                             }),
@@ -4486,13 +4505,13 @@ mod tests {
         use oas3::spec::Response;
 
         // Create only a 2XX response
-        let mut responses = BTreeMap::new();
-        let mut content = BTreeMap::new();
+        let mut responses = oas3::Map::new();
+        let mut content = oas3::Map::new();
         content.insert(
             "application/json".to_string(),
             MediaType {
                 extensions: Default::default(),
-                schema: Some(ObjectOrReference::Object(ObjectSchema {
+                schema: Some(schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::Array)),
                     items: Some(Box::new(Schema::Object(Box::new(
                         ObjectOrReference::Object(ObjectSchema {
@@ -4539,7 +4558,7 @@ mod tests {
         use oas3::spec::Response;
 
         // Create only error responses
-        let mut responses = BTreeMap::new();
+        let mut responses = oas3::Map::new();
         responses.insert(
             "404".to_string(),
             ObjectOrReference::Object(Response {
@@ -4577,13 +4596,13 @@ mod tests {
         let mut schemas = BTreeMap::new();
         schemas.insert(
             "Pet".to_string(),
-            ObjectOrReference::Object(ObjectSchema {
+            schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                 properties: {
-                    let mut props = BTreeMap::new();
+                    let mut props = oas3::Map::new();
                     props.insert(
                         "name".to_string(),
-                        ObjectOrReference::Object(ObjectSchema {
+                        schema_object(ObjectSchema {
                             schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                             ..Default::default()
                         }),
@@ -4593,20 +4612,16 @@ mod tests {
                 ..Default::default()
             }),
         );
-        spec.components.as_mut().unwrap().schemas = schemas;
+        spec.components.as_mut().unwrap().schemas = schemas.into();
 
         // Create response with $ref
-        let mut responses = BTreeMap::new();
-        let mut content = BTreeMap::new();
+        let mut responses = oas3::Map::new();
+        let mut content = oas3::Map::new();
         content.insert(
             "application/json".to_string(),
             MediaType {
                 extensions: Default::default(),
-                schema: Some(ObjectOrReference::Ref {
-                    ref_path: "#/components/schemas/Pet".to_string(),
-                    summary: None,
-                    description: None,
-                }),
+                schema: Some(schema_ref("#/components/schemas/Pet")),
                 examples: None,
                 encoding: Default::default(),
             },
@@ -4650,19 +4665,19 @@ mod tests {
         };
 
         // Add a response
-        let mut responses = BTreeMap::new();
-        let mut content = BTreeMap::new();
+        let mut responses = oas3::Map::new();
+        let mut content = oas3::Map::new();
         content.insert(
             "application/json".to_string(),
             MediaType {
                 extensions: Default::default(),
-                schema: Some(ObjectOrReference::Object(ObjectSchema {
+                schema: Some(schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                     properties: {
-                        let mut props = BTreeMap::new();
+                        let mut props = oas3::Map::new();
                         props.insert(
                             "id".to_string(),
-                            ObjectOrReference::Object(ObjectSchema {
+                            schema_object(ObjectSchema {
                                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                                 ..Default::default()
                             }),
@@ -4824,11 +4839,11 @@ mod tests {
         let obj_schema = ObjectSchema {
             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
             properties: {
-                let mut props = BTreeMap::new();
+                let mut props = oas3::Map::new();
                 // Property with space
                 props.insert(
                     "user name".to_string(),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                         ..Default::default()
                     }),
@@ -4836,7 +4851,7 @@ mod tests {
                 // Property with special characters
                 props.insert(
                     "price($)".to_string(),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::Number)),
                         ..Default::default()
                     }),
@@ -4844,7 +4859,7 @@ mod tests {
                 // Valid property name
                 props.insert(
                     "validName".to_string(),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                         ..Default::default()
                     }),
@@ -4881,7 +4896,7 @@ mod tests {
                     style: None,
                     explode: None,
                     allow_reserved: Some(false),
-                    schema: Some(ObjectOrReference::Object(ObjectSchema {
+                    schema: Some(schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                         ..Default::default()
                     })),
@@ -4901,7 +4916,7 @@ mod tests {
                     style: None,
                     explode: None,
                     allow_reserved: Some(false),
-                    schema: Some(ObjectOrReference::Object(ObjectSchema {
+                    schema: Some(schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                         ..Default::default()
                     })),
@@ -4921,7 +4936,7 @@ mod tests {
                     style: None,
                     explode: None,
                     allow_reserved: Some(false),
-                    schema: Some(ObjectOrReference::Object(ObjectSchema {
+                    schema: Some(schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                         ..Default::default()
                     })),
@@ -5295,7 +5310,7 @@ mod tests {
                 style: None,
                 explode: None,
                 allow_reserved: Some(false),
-                schema: Some(ObjectOrReference::Object(ObjectSchema {
+                schema: Some(schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                     ..Default::default()
                 })),
@@ -5354,7 +5369,7 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 ..Default::default()
             })),
@@ -5402,12 +5417,12 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 ..Default::default()
             })),
             example: None,
-            examples: examples_map,
+            examples: examples_map.into(),
             content: None,
             extensions: Default::default(),
         };
@@ -5436,7 +5451,7 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Object(ObjectSchema {
+            schema: Some(schema_object(ObjectSchema {
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                 ..Default::default()
             })),
@@ -5658,7 +5673,7 @@ mod tests {
         // Add a Pet schema to resolve the reference
         spec.components.as_mut().unwrap().schemas.insert(
             "Pet".to_string(),
-            ObjectOrReference::Object(ObjectSchema {
+            schema_object(ObjectSchema {
                 description: None, // No description so reference metadata should be used as fallback
                 schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                 ..Default::default()
@@ -5676,13 +5691,13 @@ mod tests {
             style: None,
             explode: None,
             allow_reserved: Some(false),
-            schema: Some(ObjectOrReference::Ref {
-                ref_path: "#/components/schemas/Pet".to_string(),
-                summary: Some("Pet Reference".to_string()),
-                description: Some("A reference to pet schema with additional context".to_string()),
-            }),
+            schema: Some(schema_ref_with_metadata(
+                "#/components/schemas/Pet",
+                Some("Pet Reference"),
+                Some("A reference to pet schema with additional context"),
+            )),
             example: None,
-            examples: BTreeMap::new(),
+            examples: BTreeMap::new().into(),
             content: None,
             extensions: Default::default(),
         };
@@ -5746,7 +5761,7 @@ mod tests {
         let spec = create_test_spec();
 
         // Create responses with a reference that has metadata
-        let mut responses = BTreeMap::new();
+        let mut responses = oas3::Map::new();
         responses.insert(
             "200".to_string(),
             ObjectOrReference::Ref {
@@ -5790,10 +5805,10 @@ mod tests {
         let node_schema = ObjectSchema {
             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
             properties: {
-                let mut props = BTreeMap::new();
+                let mut props = oas3::Map::new();
                 props.insert(
                     "name".to_string(),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                         ..Default::default()
                     }),
@@ -5801,7 +5816,7 @@ mod tests {
                 // Self-reference: children is an array of Node
                 props.insert(
                     "children".to_string(),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::Array)),
                         items: Some(Box::new(Schema::Object(Box::new(ObjectOrReference::Ref {
                             ref_path: "#/components/schemas/Node".to_string(),
@@ -5820,7 +5835,7 @@ mod tests {
         if let Some(ref mut components) = spec.components {
             components
                 .schemas
-                .insert("Node".to_string(), ObjectOrReference::Object(node_schema));
+                .insert("Node".to_string(), schema_object(node_schema));
         }
 
         // Now try to convert a reference to this self-referencing schema
@@ -5858,32 +5873,20 @@ mod tests {
         if let Some(ref mut components) = spec.components {
             components.schemas.insert(
                 "Target".to_string(),
-                ObjectOrReference::Object(ObjectSchema {
+                schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                     ..Default::default()
                 }),
             );
             components.schemas.insert(
                 "AliasA".to_string(),
-                ObjectOrReference::Ref {
-                    ref_path: "#/components/schemas/Target".to_string(),
-                    summary: None,
-                    description: None,
-                },
+                schema_ref("#/components/schemas/Target"),
             );
         }
         let outer = ObjectSchema {
             one_of: vec![
-                ObjectOrReference::Ref {
-                    ref_path: "#/components/schemas/AliasA".to_string(),
-                    summary: None,
-                    description: None,
-                },
-                ObjectOrReference::Ref {
-                    ref_path: "#/components/schemas/Target".to_string(),
-                    summary: None,
-                    description: None,
-                },
+                schema_ref("#/components/schemas/AliasA"),
+                schema_ref("#/components/schemas/Target"),
             ],
             ..Default::default()
         };
@@ -5904,38 +5907,26 @@ mod tests {
         if let Some(ref mut components) = spec.components {
             components.schemas.insert(
                 "Target".to_string(),
-                ObjectOrReference::Object(ObjectSchema {
+                schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                     ..Default::default()
                 }),
             );
             components.schemas.insert(
                 "AliasA".to_string(),
-                ObjectOrReference::Ref {
-                    ref_path: "#/components/schemas/Target".to_string(),
-                    summary: None,
-                    description: None,
-                },
+                schema_ref("#/components/schemas/Target"),
             );
         }
         let outer = ObjectSchema {
             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
-            properties: BTreeMap::from([
+            properties: oas3::Map::from([
                 (
                     "a".to_string(),
-                    ObjectOrReference::Ref {
-                        ref_path: "#/components/schemas/AliasA".to_string(),
-                        summary: None,
-                        description: None,
-                    },
+                    schema_ref("#/components/schemas/AliasA"),
                 ),
                 (
                     "b".to_string(),
-                    ObjectOrReference::Ref {
-                        ref_path: "#/components/schemas/Target".to_string(),
-                        summary: None,
-                        description: None,
-                    },
+                    schema_ref("#/components/schemas/Target"),
                 ),
             ]),
             ..Default::default()
@@ -5963,10 +5954,10 @@ mod tests {
             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
             required: vec!["title".to_string()],
             properties: {
-                let mut props = BTreeMap::new();
+                let mut props = oas3::Map::new();
                 props.insert(
                     "title".to_string(),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                         ..Default::default()
                     }),
@@ -5981,10 +5972,10 @@ mod tests {
             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
             required: vec!["type".to_string()],
             properties: {
-                let mut props = BTreeMap::new();
+                let mut props = oas3::Map::new();
                 props.insert(
                     "type".to_string(),
-                    ObjectOrReference::Object(ObjectSchema {
+                    schema_object(ObjectSchema {
                         schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                         enum_values: vec![json!("Application")],
                         ..Default::default()
@@ -5996,14 +5987,10 @@ mod tests {
         };
 
         let section = ObjectSchema {
-            one_of: vec![ObjectOrReference::Object(ObjectSchema {
+            one_of: vec![schema_object(ObjectSchema {
                 all_of: vec![
-                    ObjectOrReference::Ref {
-                        ref_path: "#/components/schemas/Application".to_string(),
-                        summary: None,
-                        description: None,
-                    },
-                    ObjectOrReference::Object(discriminator),
+                    schema_ref("#/components/schemas/Application"),
+                    schema_object(discriminator),
                 ],
                 ..Default::default()
             })],
@@ -6013,7 +6000,7 @@ mod tests {
         if let Some(ref mut components) = spec.components {
             components.schemas.insert(
                 "Application".to_string(),
-                ObjectOrReference::Object(application),
+                schema_object(application),
             );
         }
 
@@ -6048,11 +6035,11 @@ mod tests {
         let spec = create_test_spec();
         let schema = ObjectSchema {
             any_of: vec![
-                ObjectOrReference::Object(ObjectSchema {
+                schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::String)),
                     ..Default::default()
                 }),
-                ObjectOrReference::Object(ObjectSchema {
+                schema_object(ObjectSchema {
                     schema_type: Some(SchemaTypeSet::Single(SchemaType::Integer)),
                     ..Default::default()
                 }),
@@ -6079,18 +6066,18 @@ mod tests {
         let request_body = ObjectOrReference::Object(RequestBody {
             description: Some("File upload request".to_string()),
             content: {
-                let mut content = BTreeMap::new();
+                let mut content = oas3::Map::new();
                 content.insert(
                     "multipart/form-data".to_string(),
                     MediaType {
                         extensions: Default::default(),
-                        schema: Some(ObjectOrReference::Object(ObjectSchema {
+                        schema: Some(schema_object(ObjectSchema {
                             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                             properties: {
-                                let mut props = BTreeMap::new();
+                                let mut props = oas3::Map::new();
                                 props.insert(
                                     "file".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6184,18 +6171,18 @@ mod tests {
         let request_body = ObjectOrReference::Object(RequestBody {
             description: Some("Multiple file upload request".to_string()),
             content: {
-                let mut content = BTreeMap::new();
+                let mut content = oas3::Map::new();
                 content.insert(
                     "multipart/form-data".to_string(),
                     MediaType {
                         extensions: Default::default(),
-                        schema: Some(ObjectOrReference::Object(ObjectSchema {
+                        schema: Some(schema_object(ObjectSchema {
                             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                             properties: {
-                                let mut props = BTreeMap::new();
+                                let mut props = oas3::Map::new();
                                 props.insert(
                                     "avatar".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6206,7 +6193,7 @@ mod tests {
                                 );
                                 props.insert(
                                     "document".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6217,7 +6204,7 @@ mod tests {
                                 );
                                 props.insert(
                                     "resume".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6290,19 +6277,19 @@ mod tests {
         let request_body = ObjectOrReference::Object(RequestBody {
             description: Some("Profile creation with file upload".to_string()),
             content: {
-                let mut content = BTreeMap::new();
+                let mut content = oas3::Map::new();
                 content.insert(
                     "multipart/form-data".to_string(),
                     MediaType {
                         extensions: Default::default(),
-                        schema: Some(ObjectOrReference::Object(ObjectSchema {
+                        schema: Some(schema_object(ObjectSchema {
                             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                             properties: {
-                                let mut props = BTreeMap::new();
+                                let mut props = oas3::Map::new();
                                 // Binary file field - should be transformed
                                 props.insert(
                                     "avatar".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6314,7 +6301,7 @@ mod tests {
                                 // Regular string field - should remain unchanged
                                 props.insert(
                                     "name".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6325,7 +6312,7 @@ mod tests {
                                 // Regular integer field - should remain unchanged
                                 props.insert(
                                     "age".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::Integer,
                                         )),
@@ -6336,7 +6323,7 @@ mod tests {
                                 // Email field with format - should remain unchanged
                                 props.insert(
                                     "email".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6421,19 +6408,19 @@ mod tests {
         let request_body = ObjectOrReference::Object(RequestBody {
             description: Some("Base64 encoded file upload".to_string()),
             content: {
-                let mut content = BTreeMap::new();
+                let mut content = oas3::Map::new();
                 content.insert(
                     "multipart/form-data".to_string(),
                     MediaType {
                         extensions: Default::default(),
-                        schema: Some(ObjectOrReference::Object(ObjectSchema {
+                        schema: Some(schema_object(ObjectSchema {
                             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                             properties: {
-                                let mut props = BTreeMap::new();
+                                let mut props = oas3::Map::new();
                                 // format: byte should be treated as a file field
                                 props.insert(
                                     "data".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6447,7 +6434,7 @@ mod tests {
                                 // format: binary for comparison
                                 props.insert(
                                     "attachment".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6522,19 +6509,19 @@ mod tests {
         let request_body = ObjectOrReference::Object(RequestBody {
             description: Some("Form submission".to_string()),
             content: {
-                let mut content = BTreeMap::new();
+                let mut content = oas3::Map::new();
                 content.insert(
                     "multipart/form-data".to_string(),
                     MediaType {
                         extensions: Default::default(),
-                        schema: Some(ObjectOrReference::Object(ObjectSchema {
+                        schema: Some(schema_object(ObjectSchema {
                             schema_type: Some(SchemaTypeSet::Single(SchemaType::Object)),
                             properties: {
-                                let mut props = BTreeMap::new();
+                                let mut props = oas3::Map::new();
                                 // Various non-file field types
                                 props.insert(
                                     "title".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6544,7 +6531,7 @@ mod tests {
                                 );
                                 props.insert(
                                     "count".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::Integer,
                                         )),
@@ -6554,7 +6541,7 @@ mod tests {
                                 );
                                 props.insert(
                                     "enabled".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::Boolean,
                                         )),
@@ -6564,7 +6551,7 @@ mod tests {
                                 );
                                 props.insert(
                                     "price".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::Number,
                                         )),
@@ -6574,7 +6561,7 @@ mod tests {
                                 );
                                 props.insert(
                                     "uuid".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
@@ -6585,7 +6572,7 @@ mod tests {
                                 );
                                 props.insert(
                                     "date".to_string(),
-                                    ObjectOrReference::Object(ObjectSchema {
+                                    schema_object(ObjectSchema {
                                         schema_type: Some(SchemaTypeSet::Single(
                                             SchemaType::String,
                                         )),
