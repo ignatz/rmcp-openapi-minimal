@@ -15,46 +15,39 @@ name = "rmcp_openapi"
 path = "src/lib.rs"
 
 [dependencies]
+async-trait = "0.1"
+base64 = "0.23"
+bon = "3.7"
+heck = "0.5.0"
+http = "1.3.1"
+indexmap = "2.0"
+jsonschema = "0.49.0"
+mime = "0.3.17"
+oas3 = "0.22"
+regex = "1.0"
+reqwest = { version = "0.13", default-features = false, features = ["http2", "json", "charset", "system-proxy", "rustls", "multipart", "form"] }
 rmcp = { version = "3.1.2", default-features = false, features = ["server", "base64", "macros", "transport-streamable-http-server", "transport-streamable-http-server-session", "transport-worker"] }
 # rmcp-actix-web = { version = "0.12.1", default-features = false, features = ["transport-streamable-http"], optional = true }
-reqwest = { version = "0.13", default-features = false, features = ["http2", "json", "charset", "system-proxy", "rustls", "multipart", "form"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
 schemars = "1.0.4"
-thiserror = "2.0"
-regex = "1.0"
-oas3 = "0.22"
-indexmap = "2.0"
-mime = "0.3.17"
-url = "2.5.4"
-tracing = "0.1"
-strsim = "0.11.1"
-async-trait = "0.1"
-http = "1.3.1"
-bon = "3.7"
-jsonschema = "0.49.0"
-heck = "0.5.0"
-base64 = "0.23"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = [] }
 serde_path_to_error = "0.1"
+strsim = "0.11.1"
+thiserror = "2.0"
+tracing = "0.1"
+url = "2.5.4"
 
 [dev-dependencies]
 actix-web = "4.9.0"
-rmcp = { version = "3.1.2", features = [
-    "server",
-    "client",
-    "transport-streamable-http-server",
-] }
-insta = { version = "1.43.1", features = ["json"] }
 anyhow = "1.0"
-tokio-util = "0.7"
-tokio = { version = "1.0", default-features = false, features = [
-    "fs",
-    "process",
-    "time",
-] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.8", features = [] }
+insta = { version = "1.43.1", features = ["json"] }
 mockito = "1.7.0"
+rmcp = { version = "3.1.2", features = ["server", "client", "transport-streamable-http-server"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+tokio = { version = "1.0", default-features = false, features = ["fs", "process", "time"] }
+tokio-util = "0.7"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = []
