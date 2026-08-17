@@ -21,17 +21,17 @@ impl<'a> SecurityObserver<'a> {
                     "Authorization header stripped (MCP-compliant mode)"
                 );
             }
-            #[cfg(feature = "authorization-token-passthrough")]
-            Authorization::PassthroughWarn(_) if has_auth => {
-                debug!(
-                    operation_id,
-                    "Forwarding Authorization header (passthrough mode)"
-                );
-            }
-            #[cfg(feature = "authorization-token-passthrough")]
-            Authorization::PassthroughSilent(_) => {
-                trace!(operation_id, has_auth, "Processing request");
-            }
+            // #[cfg(feature = "authorization-token-passthrough")]
+            // Authorization::PassthroughWarn(_) if has_auth => {
+            //     debug!(
+            //         operation_id,
+            //         "Forwarding Authorization header (passthrough mode)"
+            //     );
+            // }
+            // #[cfg(feature = "authorization-token-passthrough")]
+            // Authorization::PassthroughSilent(_) => {
+            //     trace!(operation_id, has_auth, "Processing request");
+            // }
             _ => {
                 trace!(operation_id, has_auth, requires_auth, "Processing request");
             }
@@ -51,18 +51,17 @@ impl<'a> SecurityObserver<'a> {
         match self.authorization {
             Authorization::None => {
                 tracing::info!("Authorization mode: compliant (headers will not be forwarded)");
-            }
-            #[cfg(feature = "authorization-token-passthrough")]
-            Authorization::PassthroughWarn(_) => {
-                tracing::warn!(
-                    "Authorization mode: passthrough (non-MCP-compliant) - \
-                     Authorization headers WILL be forwarded to backend APIs. See SECURITY.md"
-                );
-            }
-            #[cfg(feature = "authorization-token-passthrough")]
-            Authorization::PassthroughSilent(_) => {
-                tracing::info!("Authorization mode: passthrough-silent");
-            }
+            } // #[cfg(feature = "authorization-token-passthrough")]
+              // Authorization::PassthroughWarn(_) => {
+              //     tracing::warn!(
+              //         "Authorization mode: passthrough (non-MCP-compliant) - \
+              //          Authorization headers WILL be forwarded to backend APIs. See SECURITY.md"
+              //     );
+              // }
+              // #[cfg(feature = "authorization-token-passthrough")]
+              // Authorization::PassthroughSilent(_) => {
+              //     tracing::info!("Authorization mode: passthrough-silent");
+              // }
         }
     }
 }

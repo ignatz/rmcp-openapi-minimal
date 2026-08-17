@@ -54,32 +54,32 @@ impl Tool {
         // Log the authorization decision
         let has_auth = match &authorization {
             Authorization::None => false,
-            #[cfg(feature = "authorization-token-passthrough")]
-            Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => {
-                header.is_some()
-            }
+            // #[cfg(feature = "authorization-token-passthrough")]
+            // Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => {
+            //     header.is_some()
+            // }
         };
 
         observer.observe_request(&self.metadata.name, has_auth, self.metadata.requires_auth());
 
         // Extract authorization header if present
-        #[cfg(feature = "authorization-token-passthrough")]
-        let client = {
-            let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
-                match &authorization {
-                    Authorization::None => None,
-                    Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => header.as_ref(),
-                };
-
-            // Create HTTP client with authorization if provided
-            if let Some(auth) = auth_header {
-                self.http_client.with_authorization(&auth.0)
-            } else {
-                self.http_client.clone()
-            }
-        };
-
-        #[cfg(not(feature = "authorization-token-passthrough"))]
+        // #[cfg(feature = "authorization-token-passthrough")]
+        // let client = {
+        //     let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
+        //         match &authorization {
+        //             Authorization::None => None,
+        //             Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => header.as_ref(),
+        //         };
+        //
+        //     // Create HTTP client with authorization if provided
+        //     if let Some(auth) = auth_header {
+        //         self.http_client.with_authorization(&auth.0)
+        //     } else {
+        //         self.http_client.clone()
+        //     }
+        // };
+        //
+        // #[cfg(not(feature = "authorization-token-passthrough"))]
         let client = self.http_client.clone();
 
         // Determine which transformer to use: per-tool takes precedence over server-level
@@ -184,26 +184,26 @@ impl Tool {
     pub async fn execute(
         &self,
         arguments: &Value,
-        authorization: Authorization,
+        #[allow(unused)] authorization: Authorization,
     ) -> Result<crate::http_client::HttpResponse, crate::error::ToolCallError> {
         // Extract authorization header if present
-        #[cfg(feature = "authorization-token-passthrough")]
-        let client = {
-            let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
-                match &authorization {
-                    Authorization::None => None,
-                    Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => header.as_ref(),
-                };
-
-            // Create HTTP client with authorization if provided
-            if let Some(auth) = auth_header {
-                self.http_client.with_authorization(&auth.0)
-            } else {
-                self.http_client.clone()
-            }
-        };
-
-        #[cfg(not(feature = "authorization-token-passthrough"))]
+        // #[cfg(feature = "authorization-token-passthrough")]
+        // let client = {
+        //     let auth_header: Option<&rmcp_actix_web::transport::AuthorizationHeader> =
+        //         match &authorization {
+        //             Authorization::None => None,
+        //             Authorization::PassthroughWarn(header) | Authorization::PassthroughSilent(header) => header.as_ref(),
+        //         };
+        //
+        //     // Create HTTP client with authorization if provided
+        //     if let Some(auth) = auth_header {
+        //         self.http_client.with_authorization(&auth.0)
+        //     } else {
+        //         self.http_client.clone()
+        //     }
+        // };
+        //
+        // #[cfg(not(feature = "authorization-token-passthrough"))]
         let client = self.http_client.clone();
 
         // Execute the HTTP request using the (potentially auth-enhanced) HTTP client

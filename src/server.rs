@@ -423,9 +423,9 @@ impl ServerHandler for Server {
         let arguments_value = Value::Object(arguments);
 
         // Extract authorization header from context extensions
-        #[cfg(feature = "authorization-token-passthrough")]
-        let auth_header = context.extensions.get::<rmcp_actix_web::transport::AuthorizationHeader>().cloned();
-        #[cfg(not(feature = "authorization-token-passthrough"))]
+        // #[cfg(feature = "authorization-token-passthrough")]
+        // let auth_header = context.extensions.get::<rmcp_actix_web::transport::AuthorizationHeader>().cloned();
+        // #[cfg(not(feature = "authorization-token-passthrough"))]
         let auth_header = None;
 
         if auth_header.is_some() {

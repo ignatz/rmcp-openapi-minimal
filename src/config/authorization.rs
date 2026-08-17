@@ -9,14 +9,13 @@ pub enum Authorization {
     /// No authorization header will be forwarded (MCP-compliant)
     #[default]
     None,
-
-    /// Forward authorization with debug logging (requires feature flag)
-    #[cfg(feature = "authorization-token-passthrough")]
-    PassthroughWarn(Option<rmcp_actix_web::transport::AuthorizationHeader>),
-
-    /// Forward authorization silently (requires feature flag)
-    #[cfg(feature = "authorization-token-passthrough")]
-    PassthroughSilent(Option<rmcp_actix_web::transport::AuthorizationHeader>),
+    // /// Forward authorization with debug logging (requires feature flag)
+    // #[cfg(feature = "authorization-token-passthrough")]
+    // PassthroughWarn(Option<rmcp_actix_web::transport::AuthorizationHeader>),
+    //
+    // /// Forward authorization silently (requires feature flag)
+    // #[cfg(feature = "authorization-token-passthrough")]
+    // PassthroughSilent(Option<rmcp_actix_web::transport::AuthorizationHeader>),
 }
 
 /// Simple mode enum for conversion (matches CLI AuthorizationMode)
@@ -24,10 +23,10 @@ pub enum Authorization {
 pub enum AuthorizationMode {
     #[default]
     Compliant,
-    #[cfg(feature = "authorization-token-passthrough")]
-    PassthroughWarn,
-    #[cfg(feature = "authorization-token-passthrough")]
-    PassthroughSilent,
+    // #[cfg(feature = "authorization-token-passthrough")]
+    // PassthroughWarn,
+    // #[cfg(feature = "authorization-token-passthrough")]
+    // PassthroughSilent,
 }
 
 impl FromStr for AuthorizationMode {
@@ -36,14 +35,14 @@ impl FromStr for AuthorizationMode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "compliant" => Ok(AuthorizationMode::Compliant),
-            #[cfg(feature = "authorization-token-passthrough")]
-            "passthrough-warn" => Ok(AuthorizationMode::PassthroughWarn),
-            #[cfg(feature = "authorization-token-passthrough")]
-            "passthrough-silent" => Ok(AuthorizationMode::PassthroughSilent),
+            // #[cfg(feature = "authorization-token-passthrough")]
+            // "passthrough-warn" => Ok(AuthorizationMode::PassthroughWarn),
+            // #[cfg(feature = "authorization-token-passthrough")]
+            // "passthrough-silent" => Ok(AuthorizationMode::PassthroughSilent),
             _ => {
-                #[cfg(feature = "authorization-token-passthrough")]
-                let valid = "compliant, passthrough-warn, passthrough-silent";
-                #[cfg(not(feature = "authorization-token-passthrough"))]
+                // #[cfg(feature = "authorization-token-passthrough")]
+                // let valid = "compliant, passthrough-warn, passthrough-silent";
+                // #[cfg(not(feature = "authorization-token-passthrough"))]
                 let valid = "compliant";
                 Err(format!(
                     "Invalid authorization mode: '{}'. Valid values: {}",
@@ -56,25 +55,21 @@ impl FromStr for AuthorizationMode {
 
 impl Authorization {
     /// Create Authorization from a mode and optional header
-            #[cfg(feature = "authorization-token-passthrough")]
-    pub fn from_mode(
-        mode: AuthorizationMode,
-        header: Option<rmcp_actix_web::transport::AuthorizationHeader>,
-    ) -> Self {
-        match mode {
-            AuthorizationMode::Compliant => Authorization::None,
-            AuthorizationMode::PassthroughWarn => Authorization::PassthroughWarn(header),
-            AuthorizationMode::PassthroughSilent => Authorization::PassthroughSilent(header),
-        }
-    }
+    // #[cfg(feature = "authorization-token-passthrough")]
+    // pub fn from_mode(
+    //     mode: AuthorizationMode,
+    //     header: Option<rmcp_actix_web::transport::AuthorizationHeader>,
+    // ) -> Self {
+    //     match mode {
+    //         AuthorizationMode::Compliant => Authorization::None,
+    //         AuthorizationMode::PassthroughWarn => Authorization::PassthroughWarn(header),
+    //         AuthorizationMode::PassthroughSilent => Authorization::PassthroughSilent(header),
+    //     }
+    // }
 
     /// Create Authorization from a mode and optional header
-            #[cfg(not(feature = "authorization-token-passthrough"))]
-    pub fn from_mode(
-        mode: AuthorizationMode,
-        #[allow(unused)]
-        header: Option<()>,
-    ) -> Self {
+    // #[cfg(not(feature = "authorization-token-passthrough"))]
+    pub fn from_mode(mode: AuthorizationMode, #[allow(unused)] header: Option<()>) -> Self {
         match mode {
             AuthorizationMode::Compliant => Authorization::None,
         }
