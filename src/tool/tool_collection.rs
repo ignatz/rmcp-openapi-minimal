@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(mcp_tools[1].name, "test2");
     }
 
-    #[actix_web::test]
+    #[tokio::test]
     async fn test_call_tool_not_found_with_suggestions() {
         let tool1 = create_test_tool("getPetById", "Get pet by ID");
         let tool2 = create_test_tool("getPetsByStatus", "Get pets by status");
@@ -289,7 +289,7 @@ mod tests {
         }
     }
 
-    #[actix_web::test]
+    #[tokio::test]
     async fn test_call_tool_not_found_no_suggestions() {
         let tool = create_test_tool("getPetById", "Get pet by ID");
         let collection = ToolCollection::from_tools(vec![tool]);

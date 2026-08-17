@@ -183,7 +183,7 @@ impl MockImageServer {
 // ============================================================================
 
 /// Test PNG image response handling
-#[actix_web::test]
+#[tokio::test]
 async fn test_png_image_response() {
     let mut mock_server = MockImageServer::new_with_port(9201).await;
 
@@ -224,7 +224,7 @@ async fn test_png_image_response() {
 }
 
 /// Test JPEG image response handling
-#[actix_web::test]
+#[tokio::test]
 async fn test_jpeg_image_response() {
     let mut mock_server = MockImageServer::new_with_port(9202).await;
 
@@ -257,7 +257,7 @@ async fn test_jpeg_image_response() {
 }
 
 /// Test GIF image response handling
-#[actix_web::test]
+#[tokio::test]
 async fn test_gif_image_response() {
     let mut mock_server = MockImageServer::new_with_port(9203).await;
 
@@ -290,7 +290,7 @@ async fn test_gif_image_response() {
 }
 
 /// Test WebP image response handling
-#[actix_web::test]
+#[tokio::test]
 async fn test_webp_image_response() {
     let mut mock_server = MockImageServer::new_with_port(9204).await;
 
@@ -332,7 +332,7 @@ async fn test_webp_image_response() {
 }
 
 /// Test SVG+XML image response handling
-#[actix_web::test]
+#[tokio::test]
 async fn test_svg_xml_image_response() {
     let mut mock_server = MockImageServer::new_with_port(9205).await;
 
@@ -367,7 +367,7 @@ async fn test_svg_xml_image_response() {
 }
 
 /// Test BMP image response handling
-#[actix_web::test]
+#[tokio::test]
 async fn test_bmp_image_response() {
     let mut mock_server = MockImageServer::new_with_port(9206).await;
 
@@ -426,7 +426,7 @@ async fn test_bmp_image_response() {
 // ============================================================================
 
 /// Test image with charset parameter in Content-Type
-#[actix_web::test]
+#[tokio::test]
 async fn test_image_with_charset_parameter() {
     let mut mock_server = MockImageServer::new_with_port(9207).await;
 
@@ -460,7 +460,7 @@ async fn test_image_with_charset_parameter() {
 }
 
 /// Test that text/plain responses are not converted to images
-#[actix_web::test]
+#[tokio::test]
 async fn test_text_response_not_converted() {
     let mut mock_server = MockImageServer::new_with_port(9208).await;
 
@@ -491,7 +491,7 @@ async fn test_text_response_not_converted() {
 }
 
 /// Test that JSON responses are not converted to images
-#[actix_web::test]
+#[tokio::test]
 async fn test_json_response_not_converted() {
     let mut mock_server = MockImageServer::new_with_port(9209).await;
 
@@ -522,7 +522,7 @@ async fn test_json_response_not_converted() {
 }
 
 /// Test error response (404) for image endpoint
-#[actix_web::test]
+#[tokio::test]
 async fn test_error_image_response_404() {
     let mut mock_server = MockImageServer::new_with_port(9210).await;
 
@@ -555,7 +555,7 @@ async fn test_error_image_response_404() {
 }
 
 /// Test base64 encoding correctness with known data
-#[actix_web::test]
+#[tokio::test]
 async fn test_base64_encoding_correctness() {
     let mut mock_server = MockImageServer::new_with_port(9211).await;
 
@@ -599,7 +599,7 @@ async fn test_base64_encoding_correctness() {
 }
 
 /// Test handling of empty image response
-#[actix_web::test]
+#[tokio::test]
 async fn test_empty_image_response() {
     let mut mock_server = MockImageServer::new_with_port(9212).await;
 

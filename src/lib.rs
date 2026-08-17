@@ -11,7 +11,7 @@ pub mod tool_registry;
 pub mod transformer;
 
 pub use config::{Authorization, AuthorizationMode};
-pub use error::{CliError, Error, ToolCallError};
+pub use error::{Error, ToolCallError};
 pub use filter::ToolFilter;
 pub use http_client::{DataUriContent, HttpClient, HttpResponse, parse_data_uri};
 pub use security::SecurityObserver;

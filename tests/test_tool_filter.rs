@@ -303,7 +303,7 @@ fn test_read_only_filter_method_check() {
 
 /// Test: list_tools with filter returns only filtered tools
 /// This test uses a mock HTTP server to verify end-to-end behavior
-#[actix_web::test]
+#[tokio::test]
 async fn test_list_tools_with_get_only_filter() {
     let mock_server = MockPetstoreServer::new_with_port(9201).await;
     let mut server =
@@ -334,7 +334,7 @@ async fn test_list_tools_with_get_only_filter() {
 }
 
 /// Test: Verify tool filter can be configured with different filter types
-#[actix_web::test]
+#[tokio::test]
 async fn test_various_filter_configurations() {
     let mock_server = MockPetstoreServer::new_with_port(9202).await;
 
@@ -510,7 +510,7 @@ fn test_error_no_suggestions_for_unrelated_names() {
 // =============================================================================
 
 /// Test: Petstore spec has expected tool diversity for filter testing
-#[actix_web::test]
+#[tokio::test]
 async fn test_petstore_spec_tool_diversity() {
     let mock_server = MockPetstoreServer::new_with_port(9203).await;
     let server =
@@ -537,7 +537,7 @@ async fn test_petstore_spec_tool_diversity() {
 }
 
 /// Test: Filter correctly counts tools that would be filtered
-#[actix_web::test]
+#[tokio::test]
 async fn test_filter_reduces_tool_count() {
     let mock_server = MockPetstoreServer::new_with_port(9204).await;
     let server =
